@@ -14,9 +14,12 @@ class Field:
 
 
 # Validation lives in the model so every Record gets the same rules whatever path
-# creates it. isalpha() keeps names letters-only (a deliberate choice — names
-# with hyphens/apostrophes are rejected).
+# creates it. A name part may mix letters with hyphens and apostrophes so real
+# names like O'Brien, Anne-Marie and Jean-Luc are accepted, but it must still hold
+# at least one letter — that keeps out digits and bare "-"/"'" tokens.
 class Name(Field):
+    _ALLOWED_PUNCTUATION = {"-", "'"}
+
     def __init__(self, value):
         value = value.strip()
         if not value:
@@ -24,8 +27,14 @@ class Name(Field):
         if len(value) > MAX_NAME_LENGTH:
             raise ValueError(f"Name must be at most {MAX_NAME_LENGTH} characters.")
         for part in value.split():
-            if not part.isalpha():
-                raise ValueError(f"'{part}' must contain only letters.")
+            has_letter = any(ch.isalpha() for ch in part)
+            only_allowed = all(
+                ch.isalpha() or ch in self._ALLOWED_PUNCTUATION for ch in part
+            )
+            if not (has_letter and only_allowed):
+                raise ValueError(
+                    f"'{part}' may contain only letters, hyphens and apostrophes."
+                )
         super().__init__(value)
 
 

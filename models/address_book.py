@@ -13,23 +13,22 @@ def _occurrence(birthday, year):
 
 
 class AddressBook(UserDict):
+    # Records are keyed by the lower-cased name so find/delete stay O(1) dict
+    # operations while remaining case-insensitive ("john" finds "John"). The
+    # original casing is preserved on record.name for display. Names are unique
+    # ignoring case, so the lower-cased name is a safe unique key.
+    @staticmethod
+    def _key(name):
+        return name.lower()
+
     def add_record(self, record):
-        self.data[record.name.value] = record
+        self.data[self._key(record.name.value)] = record
 
     def find(self, name):
-        # Case-insensitive lookup so "john" finds "John". Names are unique
-        # ignoring case (stored title-cased), so the first match is the one.
-        name_lower = name.lower()
-        for record in self.data.values():
-            if record.name.value.lower() == name_lower:
-                return record
-        return None
+        return self.data.get(self._key(name))
 
     def delete(self, name):
-        # Match find()'s case-insensitivity so deletion works with any casing.
-        record = self.find(name)
-        if record:
-            del self.data[record.name.value]
+        self.data.pop(self._key(name), None)
 
     def get_upcoming_birthdays(self, days=7):
         # Find contacts to congratulate within the next `days` days.

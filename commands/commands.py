@@ -9,6 +9,7 @@ from handlers.contact_handlers import (
     add_contact,
     delete_contact,
     find_contact,
+    all_with_notes,
 )
 from handlers.phone_handlers import (
     change_contact,
@@ -45,7 +46,6 @@ from handlers.note_handlers import (
     show_notes,
     show_all_notes,
     find_notes,
-    all_with_notes,
     add_tag,
     edit_tag,
     delete_tag,

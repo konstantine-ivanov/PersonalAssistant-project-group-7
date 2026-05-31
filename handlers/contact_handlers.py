@@ -152,6 +152,42 @@ def delete_contact(args, book: AddressBook):
     return f"Contact '{name}' deleted."
 
 
+# Columns shared by the two full-record views (find-contact and show-contacts-full):
+# every contact field plus the contact's notes and tags.
+_FULL_CONTACT_COLUMNS = [
+    ("Name", {"style": "green"}),
+    ("Phones", {}),
+    ("Email", {}),
+    ("Birthday", {}),
+    ("Address", {}),
+    ("Notes", {}),
+    ("Tags", {"style": "yellow"}),
+]
+
+
+def _full_contact_rows(records):
+    # Build the table rows for the full-record views so find-contact and
+    # show-contacts-full render each contact identically (same fields, same order).
+    rows = []
+    for record in records:
+        phones = "; ".join(str(p) for p in record.phones) or "—"
+        email = "; ".join(e.value for e in record.emails) or "—"
+        birthday = str(record.birthday) if record.birthday else "—"
+        address = str(record.address) if record.address else "—"
+
+        notes_list = []
+        all_tags = []
+        for note in record.notes:
+            notes_list.append(f"[{note.id}] {note.value}")
+            all_tags.extend(note.tags)
+        notes_text = "\n".join(notes_list) or "—"
+        # dict.fromkeys de-dupes tags across the contact's notes while keeping order.
+        tags_text = ", ".join(dict.fromkeys(all_tags)) or "—"
+
+        rows.append((record.name.value, phones, email, birthday, address, notes_text, tags_text))
+    return rows
+
+
 @input_error
 def find_contact(args, book: AddressBook):
     if not args:
@@ -179,31 +215,20 @@ def find_contact(args, book: AddressBook):
 
     # Show the full record (notes + tags included) so search results carry the
     # same detail as show-contacts-full.
-    columns = [
-        ("Name", {"style": "green"}),
-        ("Phones", {}),
-        ("Email", {}),
-        ("Birthday", {}),
-        ("Address", {}),
-        ("Notes", {}),
-        ("Tags", {"style": "yellow"}),
-    ]
-    rows = []
-    for record in found_records:
-        phones = "; ".join(p.value for p in record.phones) or "—"
-        email = "; ".join(e.value for e in record.emails) or "—"
-        birthday = str(record.birthday) if record.birthday else "—"
-        address = str(record.address) if record.address else "—"
+    return show_paginated_table(
+        f"Search Results for '{' '.join(args)}'",
+        _FULL_CONTACT_COLUMNS,
+        _full_contact_rows(found_records),
+    )
 
-        notes_list = []
-        all_tags = []
-        for note in record.notes:
-            notes_list.append(f"[{note.id}] {note.value}")
-            all_tags.extend(note.tags)
-        notes_text = "\n".join(notes_list) or "—"
-        # dict.fromkeys de-dupes tags across the contact's notes while keeping order.
-        tags_text = ", ".join(dict.fromkeys(all_tags)) or "—"
 
-        rows.append((record.name.value, phones, email, birthday, address, notes_text, tags_text))
+@input_error
+def all_with_notes(args, book: AddressBook):
+    if not book.data:
+        return "No contacts saved."
 
-    return show_paginated_table(f"Search Results for '{' '.join(args)}'", columns, rows)
+    return show_paginated_table(
+        "All Contacts",
+        _FULL_CONTACT_COLUMNS,
+        _full_contact_rows(book.data.values()),
+    )
