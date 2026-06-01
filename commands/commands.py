@@ -52,7 +52,7 @@ from handlers.note_handlers import (
     find_by_tag,
     sort_by_tags,
 )
-from handlers.export_handlers import export_book
+from handlers.export_handlers import export_book, save_book, dump_book
 
 commands = {
     # General
@@ -106,4 +106,6 @@ commands = {
 
     # Data
     "export-book": export_book,
+    "save": save_book,
+    "dump": dump_book,
 }

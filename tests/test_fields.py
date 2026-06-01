@@ -3,7 +3,8 @@ Field-level validation tests.
 Each field class is tested in isolation — no handlers, no address book.
 
 Mirrors the rules in models/fields.py:
-  Name     — stripped, required, <= 50 chars, each space-separated part isalpha()
+  Name     — stripped, required, <= 50 chars, each part has a letter and uses
+             only letters, hyphens and apostrophes
   Phone    — non-digits stripped, must end up exactly 10 digits
   Birthday — DD.MM.YYYY only, must be a real date, not in the future
   Email    — local@domain.tld with a letters-only TLD of length >= 2
@@ -212,12 +213,19 @@ class TestNameField:
         with pytest.raises(ValueError):
             Name("A" * (MAX_NAME_LENGTH + 1))
 
-    @pytest.mark.parametrize("value", ["Alice123", "John_Doe", "Anna-Maria", "O'Brien", "Bob!"])
+    @pytest.mark.parametrize("value", ["Alice123", "John_Doe", "Bob!", "123", "-", "'", "--"])
     def test_non_letter_name_raises(self, value):
-        # isalpha() per space-separated part — digits, underscores, hyphens and
-        # apostrophes are all rejected by design.
+        # Each part must hold a letter and use only letters/hyphens/apostrophes;
+        # digits, underscores, other symbols and bare punctuation are rejected.
         with pytest.raises(ValueError):
             Name(value)
+
+    @pytest.mark.parametrize(
+        "value", ["O'Brien", "Anne-Marie", "Jean-Luc", "Mary-Jane Walker", "D'Angelo"]
+    )
+    def test_hyphen_and_apostrophe_names_allowed(self, value):
+        # Real names with hyphens/apostrophes are accepted and stored unchanged.
+        assert Name(value).value == value
 
 
 # =============================================================================

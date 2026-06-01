@@ -175,14 +175,16 @@ def _full_contact_rows(records):
         birthday = str(record.birthday) if record.birthday else "—"
         address = str(record.address) if record.address else "—"
 
+        # Tags belong to a note, not the contact, so render them line-by-line
+        # aligned with the Notes column: each note's tags sit on the same row as
+        # the note itself, instead of being flattened into one per-contact string.
         notes_list = []
-        all_tags = []
+        tags_list = []
         for note in record.notes:
             notes_list.append(f"[{note.id}] {note.value}")
-            all_tags.extend(note.tags)
+            tags_list.append(", ".join(note.tags) if note.tags else "—")
         notes_text = "\n".join(notes_list) or "—"
-        # dict.fromkeys de-dupes tags across the contact's notes while keeping order.
-        tags_text = ", ".join(dict.fromkeys(all_tags)) or "—"
+        tags_text = "\n".join(tags_list) or "—"
 
         rows.append((record.name.value, phones, email, birthday, address, notes_text, tags_text))
     return rows

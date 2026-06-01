@@ -71,4 +71,6 @@ COMMAND_META: dict[str, tuple[str, str, str]] = {
     "show-notes-by-tag": ("", "Show all notes grouped by tags", "Tags"),
 
     "export-book": ("[csv|json] [path]", "Export address book to CSV or JSON file", "Data"),
+    "save": ("", "Save the address book to disk now", "Data"),
+    "dump": ("", "Delete ALL contacts (asks for a confirmation phrase)", "Data"),
 }
