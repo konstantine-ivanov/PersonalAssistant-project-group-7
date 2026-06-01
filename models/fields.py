@@ -79,8 +79,15 @@ class Birthday(Field):
         except ValueError:
             raise ValueError("Invalid date format. Use DD.MM.YYYY")
         # A birthday in the future is always a typo, so reject it.
-        if parsed > date.today():
+        today = date.today()
+        if parsed > today:
             raise ValueError("Birthday cannot be in the future.")
+        # Nobody is older than 120, so an earlier date is a typo too.
+        age = (today.year - parsed.year) - (
+            (today.month, today.day) < (parsed.month, parsed.day)
+        )
+        if age > 120:
+            raise ValueError("Birthday cannot be more than 120 years ago.")
         self.value = parsed
 
     def __str__(self):
