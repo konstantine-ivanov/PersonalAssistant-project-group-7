@@ -16,6 +16,36 @@ from handlers.shared import (
 )
 
 
+# Easter egg: secret-identity superheroes get "de-anonymized" on quick-add, so
+# typing a hero alias files them under their real name with a playful note. Keys
+# are matched case-insensitively and ignore inner spaces ("iron man" == "ironman").
+_SECRET_IDENTITIES = {
+    "batman": "Bruce Wayne",
+    "superman": "Clark Kent",
+    "spiderman": "Peter Parker",
+    "ironman": "Tony Stark",
+    "wonderwoman": "Diana Prince",
+    "theflash": "Barry Allen",
+    "flash": "Barry Allen",
+    "daredevil": "Matt Murdock",
+    "blackpanther": "T'Challa",
+    "captainamerica": "Steve Rogers",
+    "hulk": "Bruce Banner",
+    "blackwidow": "Natasha Romanoff",
+    "catwoman": "Selina Kyle",
+    "supergirl": "Kara Danvers",
+    "aquaman": "Arthur Curry",
+}
+
+
+def _unmask_identity(full_name):
+    # Return the hero's real name if `full_name` is a known secret-identity alias,
+    # else None. Matching is case-insensitive and space-insensitive so both
+    # "Spider Man" and "spiderman" resolve to Peter Parker.
+    key = full_name.replace(" ", "").lower()
+    return _SECRET_IDENTITIES.get(key)
+
+
 def _handle_existing_contact(record, new_phone):
     # During interactive add a name collision isn't an error: let the user add
     # the number as a new phone, replace an existing one, or cancel.
@@ -71,6 +101,16 @@ def _add_contact_quick(args, book: AddressBook):
     if error:
         return error
 
+    # Easter egg: a superhero alias gets quietly filed under their real name.
+    real_name = _unmask_identity(full_name)
+    unmask_note = ""
+    if real_name:
+        unmask_note = (
+            f" (Personal anonymization is still under construction — "
+            f"filing '{full_name}' under their real name: {real_name}.)"
+        )
+        full_name = real_name
+
     # An existing name is left untouched: quick-add only creates, so the user is
     # told it exists rather than silently mutating a contact they may not mean.
     if book.find(full_name):
@@ -83,11 +123,12 @@ def _add_contact_quick(args, book: AddressBook):
         record.add_phone(phone)
     book.add_record(record)
 
-    return (
+    created = (
         f"Contact '{full_name}' created with phone {phone}."
         if phone
         else f"Contact '{full_name}' created."
     )
+    return created + unmask_note
 
 
 def _add_contact_interactive(book: AddressBook):

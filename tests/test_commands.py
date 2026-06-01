@@ -26,6 +26,7 @@ from commands.commands import commands as COMMANDS
 
 from handlers.contact_handlers import (
     add_contact, delete_contact, find_contact, all_with_notes, _full_contact_rows,
+    _SECRET_IDENTITIES, _unmask_identity,
 )
 from handlers.phone_handlers import change_contact, add_phone, remove_phone
 from handlers.email_handlers import add_email, edit_email, delete_email
@@ -343,6 +344,63 @@ class TestAddContactQuick:
         book = AddressBook()
         assert "Error" in add_contact(["Alice123"], book)
         assert book.find("Alice123") is None
+
+
+# =============================================================================
+# Easter egg: superhero secret-identity unmasking on quick-add (hidden feature)
+# =============================================================================
+
+class TestSecretIdentityEasterEgg:
+
+    def test_alias_filed_under_real_name(self):
+        book = AddressBook()
+        result = add_contact(["batman"], book)
+        # Stored under the real name, not the alias.
+        assert book.find("Bruce Wayne") is not None
+        assert book.find("Batman") is None
+        assert "Bruce Wayne" in result
+
+    def test_message_mentions_anonymization(self):
+        book = AddressBook()
+        result = add_contact(["superman"], book)
+        assert "anonymization" in result.lower()
+        assert "Clark Kent" in result
+
+    def test_alias_is_case_insensitive(self):
+        book = AddressBook()
+        add_contact(["SPIDERMAN"], book)
+        assert book.find("Peter Parker") is not None
+
+    def test_multi_word_alias_resolves(self):
+        # "iron man" (two tokens) must unmask the same as "ironman".
+        book = AddressBook()
+        add_contact(["iron", "man"], book)
+        assert book.find("Tony Stark") is not None
+
+    def test_alias_with_phone_keeps_phone(self):
+        book = AddressBook()
+        result = add_contact(["batman", "0991234567"], book)
+        assert book.find("Bruce Wayne").find_phone("0991234567") is not None
+        assert "0991234567" in result
+
+    def test_real_name_has_no_easter_egg_note(self):
+        # A normal contact must not get the unmasking note appended.
+        book = AddressBook()
+        result = add_contact(["Alice"], book)
+        assert "anonymization" not in result.lower()
+
+    def test_unmask_helper_space_and_case_insensitive(self):
+        assert _unmask_identity("Wonder Woman") == "Diana Prince"
+        assert _unmask_identity("WONDERWOMAN") == "Diana Prince"
+        assert _unmask_identity("Alice") is None
+
+    def test_every_real_name_passes_name_validation(self):
+        # Each mapped real name must itself be a valid Name (so the egg can't
+        # produce an uncreatable contact). Black Panther -> T'Challa relies on
+        # the apostrophe being allowed in names.
+        from models import Record
+        for real_name in _SECRET_IDENTITIES.values():
+            Record(real_name)  # raises ValueError if invalid
 
 
 class TestAddContactInteractive:
