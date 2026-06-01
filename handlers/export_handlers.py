@@ -4,8 +4,13 @@ import os
 from datetime import datetime
 from decorators import input_error
 from models import AddressBook
+from handlers.utils import save_data
 
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "exported_files")
+
+# Typed verbatim to confirm a full wipe. Long and specific on purpose so it can't
+# be entered by accident — a plain "yes" must never erase the whole book.
+DUMP_CONFIRMATION = "Yes, I want to delete all the addressbook"
 
 
 def _record_to_dict(record):
@@ -97,3 +102,34 @@ def export_book(args, book: AddressBook):
         _export_csv(book, filepath)
 
     return f"Address book exported to '{filepath}' ({len(book.data)} contacts)."
+
+
+@input_error
+def save_book(args, book: AddressBook):
+    # Persist on demand so users aren't forced to close the app to keep changes;
+    # the app still also saves on a clean exit (see main).
+    save_data(book)
+    return f"Address book saved ({len(book.data)} contacts)."
+
+
+@input_error
+def dump_book(args, book: AddressBook):
+    # Wiping the whole book is destructive, so it's a two-step confirm: this
+    # command only asks; the wipe happens only if the user then types the exact
+    # confirmation phrase. Anything else (incl. an empty line) aborts untouched.
+    if not book.data:
+        return "Address book is already empty."
+
+    answer = input(
+        f"This will delete ALL {len(book.data)} contacts.\n"
+        f'Type exactly  "{DUMP_CONFIRMATION}"  to confirm: '
+    ).strip()
+
+    if answer != DUMP_CONFIRMATION:
+        return "Dump cancelled — address book left unchanged."
+
+    book.data.clear()
+    # Persist the empty book immediately so the wipe survives even if the app is
+    # killed before a clean exit.
+    save_data(book)
+    return "Address book wiped — all contacts deleted."

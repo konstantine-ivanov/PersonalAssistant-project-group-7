@@ -17,6 +17,3 @@ Thumbs.db
 
 # Claude
 .claude/
-
-# Tests
-tests/

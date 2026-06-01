@@ -4,6 +4,21 @@ from datetime import datetime, date
 MAX_NAME_LENGTH = 50
 MAX_ADDRESS_LENGTH = 100
 
+# Terminals, mobile keyboards and pasted text often auto-substitute "smart"
+# punctuation, so a name typed as O’Connor (curly apostrophe) or with an
+# en/em-dash would not compare equal to the same name typed with plain ASCII —
+# the contact would look "not found". Fold those variants to their ASCII form
+# wherever names are validated or looked up so both spellings match.
+_PUNCT_VARIANTS = str.maketrans({
+    "‘": "'", "’": "'", "ʼ": "'", "′": "'",
+    "‐": "-", "‑": "-", "‒": "-", "–": "-",
+    "—": "-", "−": "-",
+})
+
+
+def normalize_punctuation(text):
+    return text.translate(_PUNCT_VARIANTS)
+
 
 class Field:
     def __init__(self, value):
@@ -14,18 +29,29 @@ class Field:
 
 
 # Validation lives in the model so every Record gets the same rules whatever path
-# creates it. isalpha() keeps names letters-only (a deliberate choice — names
-# with hyphens/apostrophes are rejected).
+# creates it. A name part may mix letters with hyphens and apostrophes so real
+# names like O'Brien, Anne-Marie and Jean-Luc are accepted, but it must still hold
+# at least one letter — that keeps out digits and bare "-"/"'" tokens.
 class Name(Field):
+    _ALLOWED_PUNCTUATION = {"-", "'"}
+
     def __init__(self, value):
-        value = value.strip()
+        # Fold smart apostrophes/dashes to ASCII first so a name pasted or typed
+        # with curly punctuation validates and is stored in a canonical form.
+        value = normalize_punctuation(value.strip())
         if not value:
             raise ValueError("Name is required.")
         if len(value) > MAX_NAME_LENGTH:
             raise ValueError(f"Name must be at most {MAX_NAME_LENGTH} characters.")
         for part in value.split():
-            if not part.isalpha():
-                raise ValueError(f"'{part}' must contain only letters.")
+            has_letter = any(ch.isalpha() for ch in part)
+            only_allowed = all(
+                ch.isalpha() or ch in self._ALLOWED_PUNCTUATION for ch in part
+            )
+            if not (has_letter and only_allowed):
+                raise ValueError(
+                    f"'{part}' may contain only letters, hyphens and apostrophes."
+                )
         super().__init__(value)
 
 

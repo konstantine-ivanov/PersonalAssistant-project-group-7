@@ -2,6 +2,7 @@ from decorators import input_error
 from models import AddressBook, Record
 from handlers.display import show_paginated_table
 from handlers.exceptions import FinishContactInput, OperationCancelled
+from handlers.note_handlers import _next_note_id
 from handlers.shared import (
     _validate_name,
     _split_name_and_value,
@@ -14,6 +15,36 @@ from handlers.shared import (
     _get_optional_tags,
     _get_address_details,
 )
+
+
+# Easter egg: secret-identity superheroes get "de-anonymized" on quick-add, so
+# typing a hero alias files them under their real name with a playful note. Keys
+# are matched case-insensitively and ignore inner spaces ("iron man" == "ironman").
+_SECRET_IDENTITIES = {
+    "batman": "Bruce Wayne",
+    "superman": "Clark Kent",
+    "spiderman": "Peter Parker",
+    "ironman": "Tony Stark",
+    "wonderwoman": "Diana Prince",
+    "theflash": "Barry Allen",
+    "flash": "Barry Allen",
+    "daredevil": "Matt Murdock",
+    "blackpanther": "T'Challa",
+    "captainamerica": "Steve Rogers",
+    "hulk": "Bruce Banner",
+    "blackwidow": "Natasha Romanoff",
+    "catwoman": "Selina Kyle",
+    "supergirl": "Kara Danvers",
+    "aquaman": "Arthur Curry",
+}
+
+
+def _unmask_identity(full_name):
+    # Return the hero's real name if `full_name` is a known secret-identity alias,
+    # else None. Matching is case-insensitive and space-insensitive so both
+    # "Spider Man" and "spiderman" resolve to Peter Parker.
+    key = full_name.replace(" ", "").lower()
+    return _SECRET_IDENTITIES.get(key)
 
 
 def _handle_existing_contact(record, new_phone):
@@ -71,6 +102,19 @@ def _add_contact_quick(args, book: AddressBook):
     if error:
         return error
 
+    # Easter egg: a superhero alias gets quietly filed under their real name.
+    # Remember the alias the user typed so we can record it as an "aka" note below.
+    real_name = _unmask_identity(full_name)
+    unmask_note = ""
+    alias = None
+    if real_name:
+        alias = full_name
+        unmask_note = (
+            f" (Personal anonymization is still under construction — "
+            f"filing '{full_name}' under their real name: {real_name}.)"
+        )
+        full_name = real_name
+
     # An existing name is left untouched: quick-add only creates, so the user is
     # told it exists rather than silently mutating a contact they may not mean.
     if book.find(full_name):
@@ -81,13 +125,18 @@ def _add_contact_quick(args, book: AddressBook):
         # Validate the phone before storing the record so a bad number can't
         # leave an orphan empty contact behind.
         record.add_phone(phone)
+    if alias:
+        # Keep the secret-identity link on the contact itself (not just in the
+        # one-off creation message) as an "aka" note.
+        record.add_note(f"aka {alias}", _next_note_id(book))
     book.add_record(record)
 
-    return (
+    created = (
         f"Contact '{full_name}' created with phone {phone}."
         if phone
         else f"Contact '{full_name}' created."
     )
+    return created + unmask_note
 
 
 def _add_contact_interactive(book: AddressBook):
@@ -152,6 +201,44 @@ def delete_contact(args, book: AddressBook):
     return f"Contact '{name}' deleted."
 
 
+# Columns shared by the two full-record views (find-contact and show-contacts-full):
+# every contact field plus the contact's notes and tags.
+_FULL_CONTACT_COLUMNS = [
+    ("Name", {"style": "green"}),
+    ("Phones", {}),
+    ("Email", {}),
+    ("Birthday", {}),
+    ("Address", {}),
+    ("Notes", {}),
+    ("Tags", {"style": "yellow"}),
+]
+
+
+def _full_contact_rows(records):
+    # Build the table rows for the full-record views so find-contact and
+    # show-contacts-full render each contact identically (same fields, same order).
+    rows = []
+    for record in records:
+        phones = "; ".join(str(p) for p in record.phones) or "—"
+        email = "; ".join(e.value for e in record.emails) or "—"
+        birthday = str(record.birthday) if record.birthday else "—"
+        address = str(record.address) if record.address else "—"
+
+        # Tags belong to a note, not the contact, so render them line-by-line
+        # aligned with the Notes column: each note's tags sit on the same row as
+        # the note itself, instead of being flattened into one per-contact string.
+        notes_list = []
+        tags_list = []
+        for note in record.notes:
+            notes_list.append(f"[{note.id}] {note.value}")
+            tags_list.append(", ".join(note.tags) if note.tags else "—")
+        notes_text = "\n".join(notes_list) or "—"
+        tags_text = "\n".join(tags_list) or "—"
+
+        rows.append((record.name.value, phones, email, birthday, address, notes_text, tags_text))
+    return rows
+
+
 @input_error
 def find_contact(args, book: AddressBook):
     if not args:
@@ -179,31 +266,20 @@ def find_contact(args, book: AddressBook):
 
     # Show the full record (notes + tags included) so search results carry the
     # same detail as show-contacts-full.
-    columns = [
-        ("Name", {"style": "green"}),
-        ("Phones", {}),
-        ("Email", {}),
-        ("Birthday", {}),
-        ("Address", {}),
-        ("Notes", {}),
-        ("Tags", {"style": "yellow"}),
-    ]
-    rows = []
-    for record in found_records:
-        phones = "; ".join(p.value for p in record.phones) or "—"
-        email = "; ".join(e.value for e in record.emails) or "—"
-        birthday = str(record.birthday) if record.birthday else "—"
-        address = str(record.address) if record.address else "—"
+    return show_paginated_table(
+        f"Search Results for '{' '.join(args)}'",
+        _FULL_CONTACT_COLUMNS,
+        _full_contact_rows(found_records),
+    )
 
-        notes_list = []
-        all_tags = []
-        for note in record.notes:
-            notes_list.append(f"[{note.id}] {note.value}")
-            all_tags.extend(note.tags)
-        notes_text = "\n".join(notes_list) or "—"
-        # dict.fromkeys de-dupes tags across the contact's notes while keeping order.
-        tags_text = ", ".join(dict.fromkeys(all_tags)) or "—"
 
-        rows.append((record.name.value, phones, email, birthday, address, notes_text, tags_text))
+@input_error
+def all_with_notes(args, book: AddressBook):
+    if not book.data:
+        return "No contacts saved."
 
-    return show_paginated_table(f"Search Results for '{' '.join(args)}'", columns, rows)
+    return show_paginated_table(
+        "All Contacts",
+        _FULL_CONTACT_COLUMNS,
+        _full_contact_rows(book.data.values()),
+    )

@@ -3,7 +3,13 @@ from models import AddressBook
 from rich.table import Table
 from rich.markup import escape
 from handlers.display import show_paginated_table
-from handlers.shared import _require_record, _choose_from, _choose_many
+from handlers.shared import (
+    _require_record,
+    _choose_from,
+    _choose_many,
+    _get_optional_tags,
+)
+from handlers.exceptions import FinishContactInput
 
 _HIGHLIGHT = "black on yellow"
 
@@ -72,23 +78,48 @@ def _resolve_note(book, args):
 
 @input_error
 def add_note(args, book: AddressBook):
-    if len(args) < 2:
+    if not args:
         return "Error: Usage: add-note [name] [text]"
     # Names may be several words, so match the longest leading run of args that is
-    # an existing contact; whatever follows is the note text. (At least one arg is
-    # always left over for the text because the loop stops before consuming all.)
+    # an existing contact; whatever follows is the inline note text. The full arg
+    # string is tried first so "add-note <full name>" resolves to the contact with
+    # no inline text, which then triggers the guided prompts below.
     record, split_at = None, 0
-    for i in range(len(args) - 1, 0, -1):
+    for i in range(len(args), 0, -1):
         found = book.find(" ".join(args[:i]))
         if found:
             record, split_at = found, i
             break
     if record is None:
         raise KeyError(args[0])
-    text = " ".join(args[split_at:])
+
+    text = " ".join(args[split_at:]).strip()
+    if text:
+        # Inline form ("add-note <name> <text>"): add it straight away, no prompts.
+        note_id = _next_note_id(book)
+        record.add_note(text, note_id)
+        return f"Note #{note_id} added to '{record.name.value}'."
+
+    # Name given without note text: guide the user through entering the note, then
+    # offer tags, instead of erroring out. A blank/cancelled note aborts cleanly.
+    text = input("Enter note text (or 'cancel' to stop): ").strip()
+    if not text or text.lower() == "cancel":
+        return "Operation cancelled."
     note_id = _next_note_id(book)
     record.add_note(text, note_id)
-    return f"Note #{note_id} added to '{record.name.value}'."
+    note = record.notes[-1]
+
+    # Tags are optional: 'cancel' here keeps the note already created, just untagged
+    # (consistent with the optional-tags step of interactive add-contact).
+    try:
+        tags = _get_optional_tags()
+    except FinishContactInput:
+        tags = []
+    for tag in tags:
+        note.add_tag(tag)
+
+    suffix = f" with tags: {', '.join(note.tags)}" if note.tags else ""
+    return f"Note #{note_id} added to '{record.name.value}'{suffix}."
 
 
 @input_error
@@ -193,41 +224,6 @@ def show_notes(args, book: AddressBook):
 
 
 @input_error
-def all_with_notes(args, book: AddressBook):
-    if not book.data:
-        return "No contacts saved."
-
-    columns = [
-        ("Name", {"style": "green"}),
-        ("Phones", {}),
-        ("Email", {}),
-        ("Birthday", {}),
-        ("Address", {}),
-        ("Notes", {}),
-        ("Tags", {"style": "yellow"}),
-    ]
-    rows = []
-    for record in book.data.values():
-        phones = "; ".join(p.value for p in record.phones) or "—"
-        email = "; ".join(e.value for e in record.emails) or "—"
-        birthday = str(record.birthday) if record.birthday else "—"
-        address = str(record.address) if record.address else "—"
-
-        notes_list = []
-        all_tags = []
-        for n in record.notes:
-            notes_list.append(f"[{n.id}] {n.value}")
-            all_tags.extend(n.tags)
-
-        notes_text = "\n".join(notes_list) or "—"
-        # dict.fromkeys de-dupes tags across the contact's notes while keeping order.
-        tags_text = ", ".join(dict.fromkeys(all_tags)) or "—"
-        rows.append((record.name.value, phones, email, birthday, address, notes_text, tags_text))
-
-    return show_paginated_table("All Contacts", columns, rows)
-
-
-@input_error
 def show_all_notes(args, book: AddressBook):
     rows = []
     for record in book.data.values():
@@ -306,8 +302,17 @@ def find_by_tag(args, book: AddressBook):
         ("Note", {"style": "white"}),
         ("Tags", {"style": "yellow"}),
     ]
-    rows = [(name, str(nid), text, ", ".join(tags))
-            for name, nid, text, tags in results]
+    # Highlight the matching tag so it stands out, like find-notes does; escape the
+    # note text so any brackets in it aren't parsed as markup.
+    rows = [
+        (
+            name,
+            str(nid),
+            escape(text),
+            _highlight(", ".join(tags), tag_query) if tags else "—",
+        )
+        for name, nid, text, tags in results
+    ]
     return show_paginated_table(f"Notes with tag '{tag_query}'", columns, rows)
 
 

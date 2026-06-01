@@ -24,7 +24,10 @@ from commands.meta import COMMAND_META, GROUP_ORDER
 from commands.hints import CommandCompleter
 from commands.commands import commands as COMMANDS
 
-from handlers.contact_handlers import add_contact, delete_contact, find_contact
+from handlers.contact_handlers import (
+    add_contact, delete_contact, find_contact, all_with_notes, _full_contact_rows,
+    _SECRET_IDENTITIES, _unmask_identity,
+)
 from handlers.phone_handlers import change_contact, add_phone, remove_phone
 from handlers.email_handlers import add_email, edit_email, delete_email
 from handlers.birthday_handlers import add_birthday, edit_birthday, delete_birthday
@@ -35,11 +38,12 @@ from handlers.display import (
 )
 from handlers.note_handlers import (
     add_note, edit_note, delete_note, show_notes, show_all_notes,
-    all_with_notes, find_notes, add_tag, edit_tag, delete_tag,
+    find_notes, add_tag, edit_tag, delete_tag,
     find_by_tag, sort_by_tags,
 )
 from handlers.export_handlers import (
-    export_book, _record_to_dict, _resolve_path, _export_json, _export_csv,
+    export_book, save_book, dump_book, DUMP_CONFIRMATION,
+    _record_to_dict, _resolve_path, _export_json, _export_csv,
 )
 from handlers.utils import parse_input, save_data, load_data, get_validated_command
 
@@ -231,6 +235,21 @@ class TestAddressBook:
         book = _make_book(("Alice", "1111111111"), ("Bob", "2222222222"))
         assert len(book.data) == 2
 
+    # --- internal keying: records are stored under a lower-cased key for O(1)
+    #     case-insensitive lookup, while record.name keeps its display casing ---
+
+    def test_record_keyed_by_lowercase_name(self):
+        book = _make_book(("Alice Johnson", "1234567890"))
+        assert "alice johnson" in book.data
+        assert book.data["alice johnson"].name.value == "Alice Johnson"
+
+    def test_find_preserves_display_casing(self):
+        book = _make_book(("Alice Johnson", "1234567890"))
+        assert book.find("ALICE JOHNSON").name.value == "Alice Johnson"
+
+    def test_key_helper_lowercases(self):
+        assert AddressBook._key("O'Brien") == "o'brien"
+
     # --- get_upcoming_birthdays ---
 
     def _book_with_birthday(self, offset_days):
@@ -325,6 +344,81 @@ class TestAddContactQuick:
         book = AddressBook()
         assert "Error" in add_contact(["Alice123"], book)
         assert book.find("Alice123") is None
+
+
+# =============================================================================
+# Easter egg: superhero secret-identity unmasking on quick-add (hidden feature)
+# =============================================================================
+
+class TestSecretIdentityEasterEgg:
+
+    def test_alias_filed_under_real_name(self):
+        book = AddressBook()
+        result = add_contact(["batman"], book)
+        # Stored under the real name, not the alias.
+        assert book.find("Bruce Wayne") is not None
+        assert book.find("Batman") is None
+        assert "Bruce Wayne" in result
+
+    def test_message_mentions_anonymization(self):
+        book = AddressBook()
+        result = add_contact(["superman"], book)
+        assert "anonymization" in result.lower()
+        assert "Clark Kent" in result
+
+    def test_alias_is_case_insensitive(self):
+        book = AddressBook()
+        add_contact(["SPIDERMAN"], book)
+        assert book.find("Peter Parker") is not None
+
+    def test_multi_word_alias_resolves(self):
+        # "iron man" (two tokens) must unmask the same as "ironman".
+        book = AddressBook()
+        add_contact(["iron", "man"], book)
+        assert book.find("Tony Stark") is not None
+
+    def test_alias_with_phone_keeps_phone(self):
+        book = AddressBook()
+        result = add_contact(["batman", "0991234567"], book)
+        assert book.find("Bruce Wayne").find_phone("0991234567") is not None
+        assert "0991234567" in result
+
+    def test_alias_recorded_as_aka_note(self):
+        # The hero alias is filed as an "aka <alias>" note on the real-name contact.
+        book = AddressBook()
+        add_contact(["batman"], book)
+        notes = book.find("Bruce Wayne").notes
+        assert [n.value for n in notes] == ["aka Batman"]
+
+    def test_multi_word_alias_aka_note_uses_typed_name(self):
+        book = AddressBook()
+        add_contact(["iron", "man"], book)
+        assert book.find("Tony Stark").notes[0].value == "aka Iron Man"
+
+    def test_real_name_has_no_aka_note(self):
+        # A normal contact gets no easter-egg note.
+        book = AddressBook()
+        add_contact(["Alice"], book)
+        assert book.find("Alice").notes == []
+
+    def test_real_name_has_no_easter_egg_note(self):
+        # A normal contact must not get the unmasking note appended.
+        book = AddressBook()
+        result = add_contact(["Alice"], book)
+        assert "anonymization" not in result.lower()
+
+    def test_unmask_helper_space_and_case_insensitive(self):
+        assert _unmask_identity("Wonder Woman") == "Diana Prince"
+        assert _unmask_identity("WONDERWOMAN") == "Diana Prince"
+        assert _unmask_identity("Alice") is None
+
+    def test_every_real_name_passes_name_validation(self):
+        # Each mapped real name must itself be a valid Name (so the egg can't
+        # produce an uncreatable contact). Black Panther -> T'Challa relies on
+        # the apostrophe being allowed in names.
+        from models import Record
+        for real_name in _SECRET_IDENTITIES.values():
+            Record(real_name)  # raises ValueError if invalid
 
 
 class TestAddContactInteractive:
@@ -695,9 +789,34 @@ class TestNoteCommands:
         assert "added" in result
         assert book.find("Mary Jane").notes[0].value == "Buy milk"
 
-    def test_add_note_missing_text(self):
+    def test_add_note_missing_text_prompts_for_note_and_tags(self):
+        # Name with no inline text starts a guided flow: prompt for the note text,
+        # then for tags. Both are applied to the new note.
         book = _make_book(("Grace", "1234567890"))
-        assert "Error" in add_note(["Grace"], book)
+        with patch("builtins.input", side_effect=["Buy milk", "shopping, urgent"]):
+            result = add_note(["Grace"], book)
+        note = book.find("Grace").notes[0]
+        assert "added" in result
+        assert note.value == "Buy milk"
+        assert note.tags == ["shopping", "urgent"]
+
+    def test_add_note_missing_text_cancel_aborts(self):
+        # Cancelling at the note prompt adds nothing.
+        book = _make_book(("Grace", "1234567890"))
+        with patch("builtins.input", side_effect=["cancel"]):
+            result = add_note(["Grace"], book)
+        assert "cancelled" in result.lower()
+        assert book.find("Grace").notes == []
+
+    def test_add_note_missing_text_blank_tags_keeps_note(self):
+        # Empty tag entry still saves the note, just without tags.
+        book = _make_book(("Grace", "1234567890"))
+        with patch("builtins.input", side_effect=["Buy milk", ""]):
+            result = add_note(["Grace"], book)
+        note = book.find("Grace").notes[0]
+        assert "added" in result
+        assert note.value == "Buy milk"
+        assert note.tags == []
 
     def test_add_note_missing_name(self):
         assert "Error" in add_note([], AddressBook())
@@ -920,6 +1039,60 @@ class TestDisplayCommands:
         book = _make_book(("Alice", "1234567890"))
         add_note(["Alice", "test note"], book)
         assert isinstance(all_with_notes([], book), Table)
+
+
+# =============================================================================
+# _full_contact_rows  (shared row builder for find-contact / show-contacts-full)
+# =============================================================================
+
+class TestFullContactRows:
+
+    def test_phone_rendered_with_mask(self):
+        # Phones are stored as bare digits but must display in +38(0XX)... mask.
+        book = _make_book(("Alice", "0991234567"))
+        rows = _full_contact_rows(book.data.values())
+        phones_cell = rows[0][1]
+        assert phones_cell == "+38(099)123-45-67"
+        assert "0991234567" not in phones_cell
+
+    def test_multiple_phones_all_masked(self):
+        book = AddressBook()
+        book.add_record(_record("Alice", "0991234567", "0671112233"))
+        phones_cell = _full_contact_rows(book.data.values())[0][1]
+        assert "+38(099)123-45-67" in phones_cell
+        assert "+38(067)111-22-33" in phones_cell
+
+    def test_tags_aligned_per_note_not_flattened(self):
+        # Tags belong to a note: each note's tags sit on their own line aligned
+        # with the Notes column, instead of one flattened per-contact string.
+        book = _make_book(("Alice", "0991234567"))
+        add_note(["Alice", "first"], book)
+        add_note(["Alice", "second"], book)
+        alice = book.find("Alice")
+        alice.notes[0].add_tag("work")
+        alice.notes[1].add_tag("home")
+
+        notes_cell, tags_cell = _full_contact_rows(book.data.values())[0][5:7]
+        assert notes_cell.splitlines() == [
+            f"[{alice.notes[0].id}] first",
+            f"[{alice.notes[1].id}] second",
+        ]
+        assert tags_cell.splitlines() == ["work", "home"]
+
+    def test_note_without_tags_shows_dash_on_its_line(self):
+        book = _make_book(("Alice", "0991234567"))
+        add_note(["Alice", "tagged"], book)
+        add_note(["Alice", "untagged"], book)
+        book.find("Alice").notes[0].add_tag("work")
+        tags_cell = _full_contact_rows(book.data.values())[0][6]
+        assert tags_cell.splitlines() == ["work", "—"]
+
+    def test_empty_optional_fields_show_dash(self):
+        book = _make_book(("Alice", "0991234567"))
+        row = _full_contact_rows(book.data.values())[0]
+        # email, birthday, address, notes, tags all empty -> dash
+        assert row[2] == "—" and row[3] == "—" and row[4] == "—"
+        assert row[5] == "—" and row[6] == "—"
 
     def test_display_birthday_returns_table(self):
         book = _make_book(("Alice", "1234567890"))
@@ -1370,3 +1543,87 @@ class TestExportBookCommand:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         assert isinstance(data, list)
         assert set(data[0].keys()) >= {"name", "phones", "emails", "birthday", "address", "notes"}
+
+
+# =============================================================================
+# save command  (persist on demand)
+# =============================================================================
+
+class TestSaveCommand:
+
+    def _patch_save(self, monkeypatch):
+        """Capture save_data calls so the real addressbook.pkl is never touched."""
+        calls = []
+        import handlers.export_handlers as eh
+        monkeypatch.setattr(eh, "save_data", lambda book: calls.append(book))
+        return calls
+
+    def test_save_persists_and_reports_count(self, monkeypatch):
+        calls = self._patch_save(monkeypatch)
+        book = _make_book(("Alice", "1234567890"), ("Bob", "0987654321"))
+        result = save_book([], book)
+        assert calls == [book]                # save_data called once with the book
+        assert "2" in result and "saved" in result.lower()
+
+    def test_save_empty_book(self, monkeypatch):
+        calls = self._patch_save(monkeypatch)
+        result = save_book([], AddressBook())
+        assert calls and "0" in result
+
+
+# =============================================================================
+# dump command  (two-step destructive wipe — needs an exact confirmation phrase)
+# =============================================================================
+
+class TestDumpCommand:
+
+    def _patch_save(self, monkeypatch):
+        saved = []
+        import handlers.export_handlers as eh
+        monkeypatch.setattr(eh, "save_data", lambda book: saved.append(len(book.data)))
+        return saved
+
+    def test_dump_already_empty_book(self, monkeypatch):
+        self._patch_save(monkeypatch)
+        assert "already empty" in dump_book([], AddressBook())
+
+    def test_dump_wrong_phrase_aborts(self, monkeypatch):
+        saved = self._patch_save(monkeypatch)
+        book = _make_book(("Alice", "1234567890"), ("Bob", "0987654321"))
+        with patch("builtins.input", return_value="yes"):
+            result = dump_book([], book)
+        assert "cancel" in result.lower()
+        assert len(book.data) == 2            # nothing deleted
+        assert saved == []                    # and nothing persisted
+
+    def test_dump_empty_input_aborts(self, monkeypatch):
+        self._patch_save(monkeypatch)
+        book = _make_book(("Alice", "1234567890"))
+        with patch("builtins.input", return_value=""):
+            dump_book([], book)
+        assert len(book.data) == 1
+
+    def test_dump_almost_right_phrase_aborts(self, monkeypatch):
+        # A near-miss (wrong casing / trailing text) must NOT trigger the wipe.
+        self._patch_save(monkeypatch)
+        book = _make_book(("Alice", "1234567890"))
+        with patch("builtins.input", return_value=DUMP_CONFIRMATION.lower()):
+            dump_book([], book)
+        assert len(book.data) == 1
+
+    def test_dump_exact_phrase_wipes_and_persists(self, monkeypatch):
+        saved = self._patch_save(monkeypatch)
+        book = _make_book(("Alice", "1234567890"), ("Bob", "0987654321"))
+        with patch("builtins.input", return_value=DUMP_CONFIRMATION):
+            result = dump_book([], book)
+        assert len(book.data) == 0            # wiped
+        assert saved == [0]                   # empty book persisted immediately
+        assert "deleted" in result.lower()
+
+    def test_dump_strips_surrounding_whitespace_on_confirmation(self, monkeypatch):
+        # Handler .strip()s the answer, so padding around the exact phrase still works.
+        self._patch_save(monkeypatch)
+        book = _make_book(("Alice", "1234567890"))
+        with patch("builtins.input", return_value=f"  {DUMP_CONFIRMATION}  "):
+            dump_book([], book)
+        assert len(book.data) == 0
