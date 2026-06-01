@@ -2,6 +2,7 @@ from decorators import input_error
 from models import AddressBook, Record
 from handlers.display import show_paginated_table
 from handlers.exceptions import FinishContactInput, OperationCancelled
+from handlers.note_handlers import _next_note_id
 from handlers.shared import (
     _validate_name,
     _split_name_and_value,
@@ -102,9 +103,12 @@ def _add_contact_quick(args, book: AddressBook):
         return error
 
     # Easter egg: a superhero alias gets quietly filed under their real name.
+    # Remember the alias the user typed so we can record it as an "aka" note below.
     real_name = _unmask_identity(full_name)
     unmask_note = ""
+    alias = None
     if real_name:
+        alias = full_name
         unmask_note = (
             f" (Personal anonymization is still under construction — "
             f"filing '{full_name}' under their real name: {real_name}.)"
@@ -121,6 +125,10 @@ def _add_contact_quick(args, book: AddressBook):
         # Validate the phone before storing the record so a bad number can't
         # leave an orphan empty contact behind.
         record.add_phone(phone)
+    if alias:
+        # Keep the secret-identity link on the contact itself (not just in the
+        # one-off creation message) as an "aka" note.
+        record.add_note(f"aka {alias}", _next_note_id(book))
     book.add_record(record)
 
     created = (

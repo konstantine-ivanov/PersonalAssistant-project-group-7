@@ -1,4 +1,5 @@
 import random
+import re
 
 from rich.table import Table
 from rich.markup import escape
@@ -6,16 +7,35 @@ from decorators import input_error
 from models import AddressBook
 from rich.console import Console
 
-console = Console()
+# highlight=False disables rich's automatic repr-highlighter. We style everything
+# explicitly (table column styles, [bold red] errors, the welcome banner), so the
+# only thing auto-highlighting did was miscolour plain messages — e.g. a name in
+# single quotes like 'Anne-Marie O'Connor' was painted as a string up to the
+# apostrophe in O'Connor, splitting its colour mid-word.
+console = Console(highlight=False)
+
+
+# Our messages wrap contact names in single quotes. Colour the whole quoted name
+# green — like rich's old auto-highlighter did — but, unlike it, keep the colour
+# unbroken across an internal apostrophe (O'Connor): a quote followed by a letter
+# is part of the name, only a quote NOT followed by a letter closes it.
+_QUOTED_NAME = re.compile(r"'[^']*(?:'[A-Za-z][^']*)*'")
+
+
+def _highlight_names(text):
+    return _QUOTED_NAME.sub(lambda m: f"[green]{m.group(0)}[/green]", text)
 
 
 def _print(result):
-    # Highlight error strings in red, but pass anything else through untouched so
-    # rich renderables (e.g. tables) keep their own formatting.
+    # Highlight error strings in red, colour quoted names green in other messages,
+    # and pass rich renderables (e.g. tables) through untouched so they keep their
+    # own formatting.
     if isinstance(result, str) and result.startswith("Error"):
         # Escape the text so bracketed usage hints like "[name]" aren't swallowed
         # as rich markup; the [bold red] wrapper still applies.
         console.print(f"[bold red]{escape(result)}[/bold red]")
+    elif isinstance(result, str):
+        console.print(_highlight_names(result))
     else:
         console.print(result)
 

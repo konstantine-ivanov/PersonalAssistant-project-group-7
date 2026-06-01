@@ -1,6 +1,8 @@
 from collections import UserDict
 from datetime import date, timedelta
 
+from .fields import normalize_punctuation
+
 
 def _occurrence(birthday, year):
     # Map a birthday onto a given year for the upcoming-birthday comparison.
@@ -19,7 +21,9 @@ class AddressBook(UserDict):
     # ignoring case, so the lower-cased name is a safe unique key.
     @staticmethod
     def _key(name):
-        return name.lower()
+        # Normalise smart punctuation before lower-casing so a lookup typed with a
+        # curly apostrophe/dash matches a record stored with the ASCII form.
+        return normalize_punctuation(name).lower()
 
     def add_record(self, record):
         self.data[self._key(record.name.value)] = record

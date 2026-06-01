@@ -383,6 +383,24 @@ class TestSecretIdentityEasterEgg:
         assert book.find("Bruce Wayne").find_phone("0991234567") is not None
         assert "0991234567" in result
 
+    def test_alias_recorded_as_aka_note(self):
+        # The hero alias is filed as an "aka <alias>" note on the real-name contact.
+        book = AddressBook()
+        add_contact(["batman"], book)
+        notes = book.find("Bruce Wayne").notes
+        assert [n.value for n in notes] == ["aka Batman"]
+
+    def test_multi_word_alias_aka_note_uses_typed_name(self):
+        book = AddressBook()
+        add_contact(["iron", "man"], book)
+        assert book.find("Tony Stark").notes[0].value == "aka Iron Man"
+
+    def test_real_name_has_no_aka_note(self):
+        # A normal contact gets no easter-egg note.
+        book = AddressBook()
+        add_contact(["Alice"], book)
+        assert book.find("Alice").notes == []
+
     def test_real_name_has_no_easter_egg_note(self):
         # A normal contact must not get the unmasking note appended.
         book = AddressBook()
@@ -771,9 +789,34 @@ class TestNoteCommands:
         assert "added" in result
         assert book.find("Mary Jane").notes[0].value == "Buy milk"
 
-    def test_add_note_missing_text(self):
+    def test_add_note_missing_text_prompts_for_note_and_tags(self):
+        # Name with no inline text starts a guided flow: prompt for the note text,
+        # then for tags. Both are applied to the new note.
         book = _make_book(("Grace", "1234567890"))
-        assert "Error" in add_note(["Grace"], book)
+        with patch("builtins.input", side_effect=["Buy milk", "shopping, urgent"]):
+            result = add_note(["Grace"], book)
+        note = book.find("Grace").notes[0]
+        assert "added" in result
+        assert note.value == "Buy milk"
+        assert note.tags == ["shopping", "urgent"]
+
+    def test_add_note_missing_text_cancel_aborts(self):
+        # Cancelling at the note prompt adds nothing.
+        book = _make_book(("Grace", "1234567890"))
+        with patch("builtins.input", side_effect=["cancel"]):
+            result = add_note(["Grace"], book)
+        assert "cancelled" in result.lower()
+        assert book.find("Grace").notes == []
+
+    def test_add_note_missing_text_blank_tags_keeps_note(self):
+        # Empty tag entry still saves the note, just without tags.
+        book = _make_book(("Grace", "1234567890"))
+        with patch("builtins.input", side_effect=["Buy milk", ""]):
+            result = add_note(["Grace"], book)
+        note = book.find("Grace").notes[0]
+        assert "added" in result
+        assert note.value == "Buy milk"
+        assert note.tags == []
 
     def test_add_note_missing_name(self):
         assert "Error" in add_note([], AddressBook())
