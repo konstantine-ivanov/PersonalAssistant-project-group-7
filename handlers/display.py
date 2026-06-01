@@ -149,6 +149,9 @@ def display_birthday(args, book: AddressBook):
 @input_error
 def display_birthdays(args, book: AddressBook):
     days = int(args[0]) if args else 7
+    # A negative window is meaningless (it would look into the past), so reject it.
+    if days < 0:
+        return "Error: Number of days cannot be negative."
     upcoming = book.get_upcoming_birthdays(days=days)
     if not upcoming:
         return f"No birthdays in the next {days} days."
